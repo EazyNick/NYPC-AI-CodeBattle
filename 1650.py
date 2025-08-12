@@ -164,10 +164,7 @@ class Game:
         self.opponent_yacht_completed = False  # 상대방이 YACHT를 완성했는지 여부
         self.my_yacht_completed = False  # 내가 YACHT를 완성했는지 여부
 
-    def log_time(self, message: str):
-        """시간 로그를 출력하는 함수"""
-        elapsed = time.time() - self.start_time
-        print(f"# Debug: [{elapsed:.3f}s] {message}", file=sys.stderr)
+
 
     def get_max_duplicate_count(self, dice_group: List[int]) -> int:
         """주사위 그룹에서 가장 많이 중복된 숫자의 개수를 반환하는 함수 (사용 가능한 규칙만 고려)"""
@@ -532,13 +529,13 @@ class Game:
     # 입찰할 그룹과 베팅 금액을 pair로 묶어서 반환
     # ============================================================================
     def calculate_bid(self, dice_a: List[int], dice_b: List[int]) -> Bid:
-        self.log_time(f"calculate_bid called with dice_a={dice_a}, dice_b={dice_b}")
+
         
         # 1. YACHT 방해가 필요한지 먼저 확인
         block_result = self.should_block_yacht(dice_a, dice_b)
         if block_result is not None:
             block_group, block_amount = block_result
-            self.log_time(f"YACHT block: {block_group} {block_amount}")
+    
             return Bid(block_group, block_amount)
         
         # 2. 중복이 더 많은 그룹 선택
@@ -549,7 +546,7 @@ class Game:
         # 3. 턴별 전략적 입찰 금액 계산
         amount = self.calculate_strategic_bid_amount(dice_a, dice_b, group)
         
-        self.log_time(f"Bid calculated: {group} {amount}")
+
         return Bid(group, amount)
 
     # ============================================================================
@@ -557,7 +554,7 @@ class Game:
     # 사용할 규칙과 사용할 주사위의 목록을 pair로 묶어서 반환
     # ============================================================================
     def calculate_put(self) -> DicePut:
-        self.log_time(f"calculate_put called with dice={self.my_state.dice}")
+
         
         # 정렬된 주사위를 한 번만 계산하여 저장 (중복 제거된 버전과 일반 버전)
         self.sorted_dice_unique = sorted(set(self.my_state.dice))
@@ -603,7 +600,7 @@ class Game:
                         rule = DiceRule(rule_index)
                         dice, score = self.find_optimal_dice_for_rule(rule)
                         
-                        self.log_time(f"High-value rules completed - prioritizing cleanup of {count} dice of value {low_num}")
+            
                         return DicePut(rule, dice)
         
         elif self.my_yacht_completed:
@@ -616,7 +613,7 @@ class Game:
                         rule = DiceRule(rule_index)
                         dice, score = self.find_optimal_dice_for_rule(rule)
                         
-                        self.log_time(f"YACHT completed - cleaning up {count} dice of value {low_num}")
+            
                         return DicePut(rule, dice)
         
         # 우선순위에 따라 규칙 검사
@@ -627,7 +624,7 @@ class Game:
                 
                 # 현재 턴과 규칙에 따른 전략적 선택
                 if self.should_use_rule_strategically(rule, score):
-                    self.log_time(f"Strategic rule considered: {rule.name}, score: {score}, current best: {best_rule.name if best_rule else None} ({best_score})")
+        
                     
                     # 불완전한 스트레이트의 경우 우선순위를 고려한 특별 처리
                     if rule in [DiceRule.SMALL_STRAIGHT, DiceRule.LARGE_STRAIGHT] and score == 0:
@@ -635,17 +632,15 @@ class Game:
                         # 단, 이미 완성된 고점수 규칙(YACHT, 완성된 스트레이트)이 있다면 제외
                         if (best_rule is None or 
                             (best_rule not in [DiceRule.YACHT, DiceRule.LARGE_STRAIGHT, DiceRule.SMALL_STRAIGHT] or best_score == 0)):
-                            self.log_time(f"Selecting incomplete straight: {rule.name}")
+            
                             best_score = score
                             best_rule = rule
                             best_dice = dice
                     elif score > best_score:
-                        self.log_time(f"Selecting higher score rule: {rule.name} ({score} > {best_score})")
+        
                         best_score = score
                         best_rule = rule
                         best_dice = dice
-                else:
-                    self.log_time(f"Strategic rule rejected: {rule.name}, score: {score}")
         
         # 전략적 선택이 없으면 모든 규칙을 점수 기반으로 검사
         if best_rule is None:
@@ -663,7 +658,7 @@ class Game:
             best_rule = DiceRule(unused_rules[0])
             best_dice = self.my_state.dice[:5] if len(self.my_state.dice) >= 5 else [0] * 5
         
-        self.log_time(f"Put calculated: {best_rule.name} {best_dice} (score: {best_score})")
+
         return DicePut(best_rule, best_dice)
 
     def calculate_simple_put(self) -> DicePut:
@@ -993,7 +988,7 @@ class Game:
         my_group: str,
     ):
         """입찰 결과를 받아서 상태 업데이트"""
-        self.log_time(f"update_get: my_group={my_group}, my_bid={my_bid}, opp_bid={opp_bid}")
+
         
         # 상대방의 입찰 가격 저장
         self.save_opponent_bid(self.current_round, opp_bid.amount)
@@ -1014,19 +1009,19 @@ class Game:
         opp_bid_ok = opp_bid.group == opp_group
         self.opp_state.bid(opp_bid_ok, opp_bid.amount)
         
-        self.log_time(f"After update_get: my_dice={self.my_state.dice}, opp_dice={self.opp_state.dice}")
+
 
     def update_put(self, put: DicePut):
         """내가 주사위를 배치한 결과 반영"""
-        self.log_time(f"update_put: {put.rule.name} {put.dice}")
+
         self.my_state.use_dice(put)
         # 내가 YACHT를 완성했는지 확인
         self.check_my_yacht_completion()
-        self.log_time(f"After update_put: remaining_dice={self.my_state.dice}")
+
 
     def update_set(self, put: DicePut):
         """상대가 주사위를 배치한 결과 반영"""
-        self.log_time(f"update_set: {put.rule.name} {put.dice}")
+
         self.opp_state.use_dice(put)
         # 상대방이 YACHT를 완성했는지 확인
         self.check_opponent_yacht_completion()
@@ -1047,11 +1042,11 @@ def main():
                 continue
 
             command, *args = line.split()
-            game.log_time(f"Received command: {command} {args}")
+    
 
             if command == "READY":
                 # 게임 시작
-                game.log_time("Sending OK")
+        
                 print("OK")
                 continue
 
@@ -1064,9 +1059,9 @@ def main():
                 for i, c in enumerate(str_b):
                     dice_b[i] = int(c)  # 문자를 숫자로 변환
                 
-                game.log_time(f"ROLL: dice_a={dice_a}, dice_b={dice_b}, round={game.current_round}")
+        
                 my_bid = game.calculate_bid(dice_a, dice_b)
-                game.log_time(f"Sending BID: {my_bid.group} {my_bid.amount}")
+        
                 print(f"BID {my_bid.group} {my_bid.amount}")
                 continue
 
@@ -1074,7 +1069,7 @@ def main():
                 # 주사위 받기
                 get_group, opp_group, opp_score = args
                 opp_score = int(opp_score)
-                game.log_time(f"GET: get_group={get_group}, opp_group={opp_group}, opp_score={opp_score}")
+        
                 game.update_get(
                     dice_a, dice_b, my_bid, Bid(opp_group, opp_score), get_group
                 )
@@ -1082,11 +1077,11 @@ def main():
 
             if command == "SCORE":
                 # 주사위 골라서 배치하기
-                game.log_time("SCORE command received")
+        
                 put = game.calculate_put()
                 game.update_put(put)
                 assert put.rule is not None
-                game.log_time(f"Sending PUT: {put.rule.name} {''.join(map(str, put.dice))}")
+        
                 print(f"PUT {put.rule.name} {''.join(map(str, put.dice))}")
                 continue
 
@@ -1094,7 +1089,7 @@ def main():
                 # 상대의 주사위 배치
                 rule, str_dice = args
                 dice = [int(c) for c in str_dice]
-                game.log_time(f"SET: {rule} {dice}")
+        
                 game.update_set(DicePut(DiceRule[rule], dice))
                 continue
 
