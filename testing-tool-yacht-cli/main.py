@@ -158,8 +158,8 @@ class Game:
     def __init__(self):
         self.my_state = GameState()  # 내 팀의 현재 상태
         self.opp_state = GameState()  # 상대 팀의 현재 상태
-        self.current_round = 1  # 현재 턴 번호
-        self.opponent_bids = {}  # 상대방의 각 턴별 입찰 가격 저장
+        self.current_round = 0  # 현재 턴 번호 (1번쨰가 1턴)
+        self.opponent_bids = {}  # 상대방의 각 턴별 입찰 가격 저장 (0번쨰가 1턴)
         self.start_time = time.time()  # 게임 시작 시간
         self.opponent_yacht_completed = False  # 상대방이 YACHT를 완성했는지 여부
         self.my_yacht_completed = False  # 내가 YACHT를 완성했는지 여부
@@ -169,8 +169,8 @@ class Game:
         elapsed = time.time() - self.start_time
         print(f"# Debug: [{elapsed:.3f}s] {message}", file=sys.stderr)
 
-    def get_max_duplicate_count(self, dice_group: List[int]) -> int:
-        """주사위 그룹에서 가장 많이 중복된 숫자의 개수를 반환하는 함수 (사용 가능한 규칙만 고려)"""
+    def get_max_duplicate_count(self, dice_group: List[int]) -> dict:
+        """주사위 그룹에서 중복된 숫자들을 딕셔너리 형태로 반환하는 함수 (사용 가능한 규칙만 고려)"""
         counts = [0] * 7  # 1~6까지의 개수 (인덱스 0은 사용하지 않음)
         
         # 각 숫자의 개수 세기
@@ -184,27 +184,25 @@ class Game:
         high_rules_completed = small_straight_completed and large_straight_completed and yacht_completed
         
         # 사용 가능한 기본 규칙들만 고려 (이미 달성한 규칙은 제외)
-        max_count = 0
+        # 중복된 숫자들을 딕셔너리로 반환 (2개 이상인 것만)
+        duplicate_dict = {}
         
         if high_rules_completed:
             # 고점수 규칙들이 달성된 경우: 큰 수부터 우선순위 (6 > 5 > 4 > 3 > 2 > 1)
             for num in range(6, 0, -1):  # 6부터 1까지 역순
                 rule_index = num - 1  # 6→5(SIX), 5→4(FIVE), ..., 1→0(ONE)
                 # 해당 규칙이 아직 사용되지 않았고, 고점수 규칙들이 모두 달성된 상태에서만 고려
-                if self.my_state.rule_score[rule_index] is None:
-                    if counts[num] > max_count:
-                        max_count = counts[num]
-                        # 가장 큰 수에서 최대 중복을 찾으면 바로 반환 (더 큰 우선순위)
-                        break
+                if self.my_state.rule_score[rule_index] is None and counts[num] >= 2:
+                    duplicate_dict[num] = counts[num]
         else:
-            # 기존 로직: 단순히 가장 많이 중복된 개수만 반환 (사용 가능한 규칙만)
+            # 기존 로직: 사용 가능한 규칙 중 2개 이상 중복된 숫자들을 딕셔너리로 반환
             for num in range(1, 7):
                 rule_index = num - 1  # 1→0(ONE), 2→1(TWO), ..., 6→5(SIX)
-                # 해당 규칙이 아직 사용되지 않았으면 고려
-                if self.my_state.rule_score[rule_index] is None:
-                    max_count = max(max_count, counts[num])
+                # 해당 규칙이 아직 사용되지 않았고 2개 이상 중복된 경우만 고려
+                if self.my_state.rule_score[rule_index] is None and counts[num] >= 2:
+                    duplicate_dict[num] = counts[num]
         
-        return max_count
+        return duplicate_dict
 
     def save_opponent_bid(self, round_num: int, bid_amount: int):
         """상대방의 입찰 가격을 저장하는 함수"""
@@ -231,6 +229,7 @@ class Game:
             return None
         
         # 상대방이 4개 중복을 가지고 있는지 확인
+        # TODO: 현재 나와있는 A, B 그룹 + 상대 보유패에서 동일한 숫자 5개가 되는지 확인하는 로직으로 바꿔야함
         opp_dice = self.opp_state.dice
         if len(opp_dice) < 4:
             return None
@@ -259,11 +258,6 @@ class Game:
         return None
 
 
-
-
-
-
-
     def calculate_rule_potential_score(self, dice: List[int], rule: DiceRule) -> int:
         """특정 규칙에 대한 잠재적 점수 계산"""
         if rule == DiceRule.ONE:
@@ -284,7 +278,11 @@ class Game:
             if any(dice.count(i) >= 4 for i in range(1, 7)):
                 return sum(dice) * 1000
             return 0
+        elif rule == DiceRule.YACHT and not self.my_yacht_completed:
+            if any(dice.count(i) == 5 for i in range(1, 7)):
+                return 50000
         elif rule == DiceRule.FULL_HOUSE:
+            #TODO: 동일한 숫자가 3개여도 PASS 되는 버그가 있을듯? 수정 필요 has_triple로 나온 숫자를 뺴고 has_pair를 구하자.
             has_pair = any(dice.count(i) == 2 or dice.count(i) == 5 for i in range(1, 7))
             has_triple = any(dice.count(i) == 3 or dice.count(i) == 5 for i in range(1, 7))
             if has_pair and has_triple:
@@ -307,74 +305,95 @@ class Game:
                 (has[2] and has[3] and has[4] and has[5] and has[6])):
                 return 30000
             return 0
-        elif rule == DiceRule.YACHT:
-            if any(dice.count(i) == 5 for i in range(1, 7)):
-                return 50000
-            return 0
         return 0
 
-    def calculate_strategic_bid_amount(self, dice_a: List[int], dice_b: List[int], selected_group: str) -> int:
+    def calculate_strategic_bid_amount(self, selected_dice: List[int]) -> int:
         """전략적 입찰 금액을 계산하는 함수"""
-        selected_dice = dice_a if selected_group == "A" else dice_b
-        max_count = self.get_max_duplicate_count(selected_dice)
+        max_count_dict = self.get_max_duplicate_count(selected_dice) 
+        dice_sum = sum(selected_dice)
         
-        if self.current_round <= 2:
+        # 딕셔너리에서 최대 중복 개수 추출
+        max_count = max(max_count_dict.values()) if max_count_dict else 0
+
+        if self.current_round <= 1:
             # 첫 번째 턴: 중복 개수와 합계를 고려한 전략적 입찰
-            dice_sum = sum(selected_dice)
             if max_count == 5:
                 return 7999  # YACHT 가능성
             elif max_count == 4:
-                return 3001  # FOUR_OF_A_KIND 가능성
+                return 4001  # FOUR_OF_A_KIND 가능성
             elif max_count == 3:
-                return 1001  # FULL_HOUSE 가능성
-            elif max_count == 2:
-                return 2   # 기본 중복
+                return 2001  # FULL_HOUSE 가능성
+            elif max_count == 2: # 기본 중복
+                if dice_sum >= 21: # 합계 높으면 더 높은 금액 입찰
+                    return 988 
+                elif dice_sum >= 17:
+                    return 498
+                return 2
             else:
                 # 중복이 없어도 높은 합계면 입찰
-                return 201 if dice_sum >= 20 else 1
+                return 3002 if dice_sum >= 20 else 1
         
-        elif self.current_round == 3:
-            # 세 번째 턴: 중복되는게 3개 이상인지 확인
-            if max_count >= 3:
-                return 999  # 3개 이상 중복이면 999 입찰
-            else:
-                return 0    # 3개 이상 중복이 없으면 0 입찰
+        elif self.current_round <= 3:
+            # 1, 2, 3 번째 턴: 중복되는게 4개 이상인지 확인
+            if max_count >= 4:
+                if dice_sum >= 21: # 합계 높으면 더 높은 금액 입찰 (44445)
+                    return 4501
+                if dice_sum >= 17: # 합계 높으면 더 높은 금액 입찰 (33335)
+                    return 3155
+                return 2401
+            elif max_count == 3: # 기본 중복
+                if dice_sum >= 22: # 합계 높으면 더 높은 금액 입찰 (44455)
+                    return 2301  
+                if dice_sum >= 19: # 합계 높으면 더 높은 금액 입찰 (33355)
+                    return 1897
+                return 1245
+            elif max_count == 2: # 기본 중복
+                if dice_sum >= 21: # 합계 높으면 더 높은 금액 입찰 (55443)
+                    return 1135
+                if dice_sum >= 16: # (44332) 
+                    return 874 
+                return 2
+            else: #중복 없음
+                if dice_sum >= 20: # 합계 높으면 더 높은 금액 입찰 (23456)
+                    return 786  
+                return 487
         
-        elif 4 <= self.current_round <= 8:
+        elif 3 <= self.current_round <= 8:
             # 4~8턴: 중복 수에 따른 전략적 입찰
-            if not self.opponent_bids:
-                return 0  # 상대방 입찰 기록이 없으면 0
-            
-            # 내가 YACHT를 완성했다면 0 또는 (최소 입찰 + 1) 중 랜덤 선택
+            # 내가 YACHT를 완성했다면 0 또는 (최소 입찰 - 1) 중 랜덤 선택
             if self.my_yacht_completed:
                 min_opponent_bid = min(self.opponent_bids.values())
                 option1 = 0
-                option2 = min(511, max(0, min_opponent_bid + 1))
+                option2 = min(511, max(0, min_opponent_bid - 1))
                 
                 # 50% 확률로 0 또는 (최소 입찰 + 1) 선택
                 return random.choice([option1, option2])
             
-            min_opponent_bid = min(self.opponent_bids.values())
-            max_opponent_bid = max(self.opponent_bids.values())
+            # YACHT를 완성하지 못했다면, 5개 완성이 목표
+            min_opponent_bid = min(self.opponent_bids.values()) # 현재까지 상대 배팅 최솟값
+            # max_opponent_bid = max(self.opponent_bids.values()) # 현재까지 상대 배팅 최댓값
             
             # 내가 보유한 주사위와 선택한 그룹의 주사위를 합쳐서 중복 수 계산
             combined_dice = self.my_state.dice + selected_dice
-            combined_max_count = self.get_max_duplicate_count(combined_dice)
+            combined_max_count_dict = self.get_max_duplicate_count(combined_dice)
+            
+            # 딕셔너리에서 최대 중복 개수 추출
+            combined_max_count = max(combined_max_count_dict.values()) if combined_max_count_dict else 0
             
             if combined_max_count == 3:
-                # 중복수가 3개인 카드가 나오면 (최소 입찰 + 1) 선택
-                return min(511, max(0, min_opponent_bid + 1))
+                # 중복수가 3개인 카드가 나오면 (최소 입찰 - 1) 선택
+                return min(499, max(0, min_opponent_bid - 1))
             elif combined_max_count == 4:
-                # 중복수가 4개인 카드가 나오면 (최대 입찰 - 1) 선택 (음수 방지)
-                return min(511, max(0, max_opponent_bid - 1))
+                # 중복수가 4개인 카드가 나오면 (최소 입찰 + 1) 선택
+                return min(511, max(0, min_opponent_bid + 1))
             else:
                 # 그 외의 경우 0 입찰
+                # TODO: (6, 6) 이거나, 5이상의 숫자가 3개 이상인 경우에는 입찰
+                # return min(599, max(0, min_opponent_bid - 1))
                 return 0
         
         elif self.current_round >= 9:
             # 9턴부터: 내가 필요한 숫자와 상대방이 필요한 숫자 기반 전략적 입찰
-            if not self.opponent_bids:
-                return 0  # 상대방 입찰 기록이 없으면 0
             
             # 내가 필요한 숫자들을 계산
             my_needed_dice_value = self.calculate_my_needed_dice_value(selected_dice)
@@ -386,29 +405,30 @@ class Game:
             
             if my_needed_dice_value > 0:
                 # 내가 필요한 숫자가 있으면 해당 그룹에 강하게 배팅
-                if my_needed_dice_value >= 10:  # 높은 가치
+                if my_needed_dice_value >= 51:  # 매우 높은 가치
                     return min(2999, max(min_opponent_bid, 1999))
-                elif my_needed_dice_value >= 5:  # 중간 가치
+                elif my_needed_dice_value >= 42:  # 높은 가치
                     return min(1999, max(min_opponent_bid, 999))
+                elif my_needed_dice_value >= 33:  # 중간 가치
+                    return min(999, max(min_opponent_bid, 99))
                 else:  # 낮은 가치
-                    return min(1, max(min_opponent_bid , 9))
+                    return min(1, max(min_opponent_bid , 2))
             elif opp_needed_dice_value > 0:
                 # 내가 필요한 숫자가 없고 상대방이 필요한 숫자가 있으면 방해 배팅
                 if opp_needed_dice_value >= 10:  # 높은 가치
-                    return min(3999, max(min_opponent_bid, 2999))
+                    return min(3499, max(min_opponent_bid, 2999))
                 elif opp_needed_dice_value >= 5:  # 중간 가치
-                    return min(2999, max(min_opponent_bid, 1999))
+                    return min(2499, max(min_opponent_bid, 1999))
                 else:  # 낮은 가치
-                    return min(1999, max(min_opponent_bid, 999))
+                    return min(1499, max(min_opponent_bid, 999))
             else:
                 # 둘 다 필요한 숫자가 없으면 기본 전략
                 option1 = 0
-                option2 = min(9, max(0, min_opponent_bid + 1))
+                option2 = min(2, max(0, min_opponent_bid + 1))
                 return random.choice([option1, option2])
         
         else:
             return 1  # 기본값
-
 
 
     def should_use_rule_strategically(self, rule: DiceRule, score: int) -> bool:
@@ -486,14 +506,32 @@ class Game:
             return Bid(block_group, block_amount)
         
         # 2. 중복이 더 많은 그룹 선택
-        max_count_a = self.get_max_duplicate_count(dice_a)
-        max_count_b = self.get_max_duplicate_count(dice_b)
-        group = "A" if max_count_a >= max_count_b else "B"
+        max_count_a_dict = self.get_max_duplicate_count(dice_a)
+        max_count_b_dict = self.get_max_duplicate_count(dice_b)
+        dice_Asum = sum(dice_a)
+        dice_Bsum = sum(dice_b)
         
+        # 딕셔너리에서 최대 중복 개수 추출
+        max_count_a = max(max_count_a_dict.values()) if max_count_a_dict else 0
+        max_count_b = max(max_count_b_dict.values()) if max_count_b_dict else 0
+        
+        # TODO: 중복이 같다면, 합이 높은 것 선택하도록 변경해야됨
+        if max_count_a >= max_count_b:
+            selected_dice = dice_a
+            group = "A"
+            if dice_Asum >= dice_Bsum:
+                selected_dice = dice_a
+                group = "A"
+            else:
+                selected_dice = dice_b
+                group = "B"
+        else:
+            selected_dice = dice_b
+            group = "B"
+
         # 3. 턴별 전략적 입찰 금액 계산
-        amount = self.calculate_strategic_bid_amount(dice_a, dice_b, group)
+        amount = self.calculate_strategic_bid_amount(selected_dice)
         
-        self.log_time(f"Bid calculated: {group} {amount}")
         return Bid(group, amount)
 
     def calculate_final_round_bid(self, dice_a: List[int], dice_b: List[int]) -> Bid:
@@ -531,6 +569,7 @@ class Game:
 
     def calculate_needed_dice_value(self, dice_group: List[int], remaining_rules: List[DiceRule]) -> int:
         """특정 주사위 그룹에서 남은 규칙들에 필요한 숫자들의 총 가치 계산"""
+        # TODO: 상대방꺼, 내것 로직 따로 나눠서, 그룹과 현재 보유중인걸로 판단해야 함
         total_value = 0
         
         for rule in remaining_rules:
@@ -538,10 +577,11 @@ class Game:
                 # 기본 규칙들: 해당 숫자의 개수
                 target_number = rule.value + 1  # ONE=0→1, TWO=1→2, ...
                 count = dice_group.count(target_number)
-                total_value += count * target_number  # 숫자 * 개수
+                total_value += count * target_number  # 개수 * 숫자
                 
             elif rule == DiceRule.CHOICE:
                 # CHOICE: 모든 숫자가 유용함
+                # TODO: 숫자가 클수록 total_value 높여야 함
                 total_value += sum(dice_group)
                 
             elif rule == DiceRule.FOUR_OF_A_KIND:
@@ -566,7 +606,7 @@ class Game:
                 ]
                 for straight in straights:
                     if straight.issubset(unique_nums):
-                        total_value += sum(straight)  # 스트레이트 숫자들의 합
+                        total_value += 15
                         
             elif rule == DiceRule.LARGE_STRAIGHT:
                 # LARGE_STRAIGHT: 연속된 5개 숫자
@@ -576,13 +616,13 @@ class Game:
                 ]
                 for straight in straights:
                     if straight.issubset(unique_nums):
-                        total_value += sum(straight)  # 스트레이트 숫자들의 합
+                        total_value += 30
                         
             elif rule == DiceRule.YACHT:
                 # YACHT: 5개가 모두 같은 숫자
                 for num in range(1, 7):
                     if dice_group.count(num) >= 5:
-                        total_value += num * 5  # 해당 숫자 * 5
+                        total_value += 50
         
         return total_value
 
@@ -703,9 +743,8 @@ class Game:
                     continue
                 
                 # 현재 턴과 규칙에 따른 전략적 선택
-                if self.should_use_rule_strategically(rule, score):
-                    self.log_time(f"Strategic rule considered: {rule.name}, score: {score}, current best: {best_rule.name if best_rule else None} ({best_score})")
-                    
+                # TODO: 수정할 곳
+                if self.should_use_rule_strategically(rule, score): # 사용할 수 있는 규칙이 있다면
                     # 불완전한 스트레이트의 경우 우선순위를 고려한 특별 처리
                     if rule in [DiceRule.SMALL_STRAIGHT, DiceRule.LARGE_STRAIGHT] and score == 0:
                         # 불완전한 스트레이트는 우선순위가 높으므로 기존 선택을 덮어씀
@@ -722,7 +761,7 @@ class Game:
                         best_rule = rule
                         best_dice = dice
                 else:
-                    self.log_time(f"Strategic rule rejected: {rule.name}, score: {score}")
+                    pass # 완성되는 규칙 없음
         
         # 전략적 선택이 없으면 모든 규칙을 점수 기반으로 검사
         if best_rule is None:
@@ -743,33 +782,10 @@ class Game:
         self.log_time(f"Put calculated: {best_rule.name} {best_dice} (score: {best_score})")
         return DicePut(best_rule, best_dice)
 
-    # def calculate_simple_put(self) -> DicePut:
-    #     """간단한 조합 계산 (시간 최적화)"""
-    #     unused_rules = [i for i, score in enumerate(self.my_state.rule_score) if score is None]
-    #     
-    #     # 가장 간단한 방법: 첫 번째 사용하지 않은 규칙과 처음 5개 주사위 사용
-    #     rule_index = unused_rules[0] if unused_rules else 0
-    #     dice = self.my_state.dice[:5] if len(self.my_state.dice) >= 5 else [0] * 5
-    #     
-    #     return DicePut(DiceRule(rule_index), dice)
-
-    # def calculate_13th_round_put(self) -> DicePut:
-    #     """13번째 턴에서 남은 주사위 5개를 남은 규칙에 넣기"""
-    #     my_dice = self.my_state.dice
-    #     
-    #     # 사용하지 않은 규칙들 찾기
-    #     unused_rules = [i for i, score in enumerate(self.my_state.rule_score) if score is None]
-    #     
-    #     # 남은 주사위 5개를 그대로 사용
-    #     dice = my_dice[:5] if len(my_dice) >= 5 else [0] * 5
-    #     
-    #     # 남은 규칙 중 첫 번째 규칙 사용
-    #     rule_index = unused_rules[0] if unused_rules else 0
-    #     
-    #     return DicePut(DiceRule(rule_index), dice)
 
     def find_optimal_dice_for_rule(self, rule: DiceRule) -> Tuple[List[int], int]:
         """규칙별 최적 주사위 조합 찾기"""
+        # TODO: 수정 필요, 턴별로 IF문을 나누자
         my_dice = self.my_state.dice.copy()  # 복사본 사용
         
         # 기본 규칙들 (ONE~SIX): 해당 숫자를 최대한 많이 선택
@@ -806,7 +822,7 @@ class Game:
                         dice.append(smallest)
                 
                 # 2순위: 9턴 이후에는 중복 상관없이 작은 수부터, 9턴 이전에는 중복이 없는 수들을 작은 수부터 선택
-                if self.current_round > 9:
+                if self.current_round >= 9:
                     # 9턴 이후: 중복 상관없이 작은 수부터 선택
                     temp_dice.sort()  # 작은 수부터 정렬
                     while len(dice) < 5 and temp_dice:
