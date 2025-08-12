@@ -528,20 +528,60 @@ class Game:
         if rule == DiceRule.CHOICE:
             return self.current_round >= 13 and score - 7000 > 0
         
-        # 7. 기본 규칙들 (ONE~SIX): 점수에 따라 판단
-        if rule in [DiceRule.ONE, DiceRule.TWO, DiceRule.THREE, DiceRule.FOUR, DiceRule.FIVE, DiceRule.SIX]:
-            # 높은 점수(3000점 이상)이면 사용
+        # 7. 기본 규칙들 (ONE~SIX): 각 규칙별로 다른 점수 임계값 적용
+        if rule == DiceRule.ONE:
+            # ONE: 1이 3개 이상이면 사용 (3000점 이상)
             if score >= 3000:
                 return True
-            # 중간 점수(1000점 이상)이면 턴에 따라 판단
-            elif score >= 1000:
-                if self.current_round <= 4:  # 초반에는 아껴두기
-                    return False
-                else:  # 후반에는 사용
-                    return True
-            # 낮은 점수는 후반에만 사용
-            else:
+            elif score >= 1000:  # 1이 2개인 경우
+                return self.current_round >= 7
+            else:  # 1이 1개인 경우
+                return self.current_round >= 10
+        
+        elif rule == DiceRule.TWO:
+            # TWO: 2가 3개 이상이면 사용 (6000점 이상)
+            if score >= 6000:
+                return True
+            elif score >= 2000:  # 2가 2개인 경우
+                return self.current_round >= 6
+            else:  # 2가 1개인 경우
+                return self.current_round >= 9
+        
+        elif rule == DiceRule.THREE:
+            # THREE: 3이 3개 이상이면 사용 (9000점 이상)
+            if score >= 9000:
+                return True
+            elif score >= 3000:  # 3이 2개인 경우
+                return self.current_round >= 6
+            else:  # 3이 1개인 경우
                 return self.current_round >= 8
+        
+        elif rule == DiceRule.FOUR:
+            # FOUR: 4가 3개 이상이면 사용 (12000점 이상)
+            if score >= 12000:
+                return True
+            elif score >= 4000:  # 4가 2개인 경우
+                return self.current_round >= 4
+            else:  # 4가 1개인 경우
+                return self.current_round >= 7
+        
+        elif rule == DiceRule.FIVE:
+            # FIVE: 5가 3개 이상이면 사용 (15000점 이상)
+            if score >= 15000:
+                return True
+            elif score >= 5000:  # 5가 2개인 경우
+                return self.current_round >= 3
+            else:  # 5가 1개인 경우
+                return self.current_round >= 6
+        
+        elif rule == DiceRule.SIX:
+            # SIX: 6이 3개 이상이면 사용 (18000점 이상)
+            if score >= 18000:
+                return True
+            elif score >= 6000:  # 6이 2개인 경우
+                return self.current_round >= 3
+            else:  # 6이 1개인 경우
+                return self.current_round >= 5
         
         return True  # 기본적으로는 사용
 
@@ -845,9 +885,7 @@ class Game:
     # 사용할 규칙과 사용할 주사위의 목록을 pair로 묶어서 반환
     # ============================================================================
     def calculate_put(self) -> DicePut:
-
-        
-        # 정렬된 주사위를 한 번만 계산하여 저장 (중복 제거된 버전과 일반 버전)
+        # 정렬된 주사위를 한 번만 계산하여 저장 (중복 제거된 버전과 단순 정렬된 변수)
         self.sorted_dice_unique = sorted(set(self.my_state.dice))
         self.sorted_dice = sorted(self.my_state.dice, reverse=True)
         
@@ -857,7 +895,48 @@ class Game:
         best_rule = None
         best_dice = None
         best_score = -1
-        
+
+        if self.current_round >= 12:
+            # 13턴 특별 로직: 2개의 RULE만 남아있는데, 여기서 10개의 주사위로 가능한 조합중에 가장 최고의 점수가 나오는 조합으로 5개, 5개씩 해야돼
+            # 남은 규칙들 찾기 (2개만 남아있음)
+            remaining_rules = []
+            for i in range(12):
+                if self.my_state.rule_score[i] is None:
+                    remaining_rules.append(DiceRule(i))
+            
+            if len(remaining_rules) == 2:
+                rule1, rule2 = remaining_rules[0], remaining_rules[1]
+                
+                # 10개 주사위를 2개 규칙에 배분하는 모든 경우의 수 계산
+                max_score = 0
+                best_dice_for_rule1 = []
+                best_dice_for_rule2 = []
+                
+                # 규칙1에 5개, 규칙2에 5개 배분
+                for i in range(len(self.my_state.dice) - 4):  # 첫 번째 주사위 선택
+                    for j in range(i + 1, len(self.my_state.dice) - 3):  # 두 번째 주사위 선택
+                        for k in range(j + 1, len(self.my_state.dice) - 2):  # 세 번째 주사위 선택
+                            for l in range(k + 1, len(self.my_state.dice) - 1):  # 네 번째 주사위 선택
+                                for m in range(l + 1, len(self.my_state.dice)):  # 다섯 번째 주사위 선택
+                                    # 규칙1에 배분할 5개 주사위
+                                    dice_for_rule1 = [self.my_state.dice[i], self.my_state.dice[j], self.my_state.dice[k], self.my_state.dice[l], self.my_state.dice[m]]
+                                    # 규칙2에 배분할 나머지 5개 주사위
+                                    dice_for_rule2 = [d for idx, d in enumerate(self.my_state.dice) if idx not in [i, j, k, l, m]]
+                                    
+                                    # 각 규칙의 점수 계산
+                                    score1 = self.calculate_rule_potential_score(dice_for_rule1, rule1)
+                                    score2 = self.calculate_rule_potential_score(dice_for_rule2, rule2)
+                                    
+                                    total_score = score1 + score2
+                                    if total_score > max_score:
+                                        max_score = total_score
+                                        best_dice_for_rule1 = dice_for_rule1
+                                        best_dice_for_rule2 = dice_for_rule2
+                
+                # 최고 점수를 내는 조합으로 첫 번째 규칙 사용
+                if best_dice_for_rule1 and best_dice_for_rule2:
+                    return DicePut(rule1, best_dice_for_rule1)
+            
         # 일반적인 우선순위 규칙 (13턴이 아니거나 CHOICE가 이미 사용된 경우)
         if self.current_round > 8:
             # 8턴 이후: 기본규칙은 낮은 숫자부터 우선순위 적용
@@ -933,7 +1012,6 @@ class Game:
                 
                 # CHOICE 규칙은 13번째 라운드에서만 사용
                 if rule == DiceRule.CHOICE and self.current_round != 13:
-        
                     continue
                 
                 # 현재 턴과 규칙에 따른 전략적 선택
@@ -1028,6 +1106,9 @@ class Game:
                     
                     while len(dice) < 5 and unique_dice:
                         selected = unique_dice.pop(0)
+                        # 9턴 이후부터 정렬
+                        if self.current_round >= 9:
+                            temp_dice.sort()
                         if selected in temp_dice:  # 아직 남아있는지 확인
                             dice.append(selected)
                             temp_dice.remove(selected)
@@ -1049,9 +1130,12 @@ class Game:
                     while len(dice) < 5 and temp_dice:
                         dice.append(temp_dice.pop(0))
                 
-                # 여전히 5개가 안 되면 0으로 채움
+                # 여전히 5개가 안 되면 남은 주사위 중에서 선택
+                while len(dice) < 5 and temp_dice:
+                    dice.append(temp_dice.pop(0))
+                # 그래도 5개가 안 되면 기본값으로 채움 (실제 주사위 값 사용)
                 while len(dice) < 5:
-                    dice.append(0)
+                    dice.append(my_dice[0] if my_dice else 1)
                 
                 score = self.calculate_rule_potential_score(dice, rule)
                 return (dice, score)
@@ -1209,6 +1293,25 @@ class Game:
             
             for sequence in sequences:
                 if all(x in sorted_dice for x in sequence):
+                    # # 특별한 예외 처리: 3456 시퀀스에서 중복이 있는 경우 SMALL_STRAIGHT를 만들 수 없음
+                    # # 예: 3,4,5,5,6이 있는 경우 3456으로는 SMALL_STRAIGHT를 만들 수 없음
+                    # if sequence == [3, 4, 5, 6] and self.current_round <= 12:
+                    #     # 3,4,5,6이 모두 있지만, 중복이 있는지 확인
+                    #     dice_counts = {}
+                    #     for die in my_dice:
+                    #         dice_counts[die] = dice_counts.get(die, 0) + 1
+                        
+                    #     # 3,4,5,6 중에서 중복이 있는지 확인
+                    #     has_duplicate_in_sequence = False
+                    #     for num in [3, 4, 5, 6]:
+                    #         if dice_counts.get(num, 0) > 1:
+                    #             has_duplicate_in_sequence = True
+                    #             break
+                        
+                    #     # 중복이 있으면 이 시퀀스는 건너뛰기
+                    #     if has_duplicate_in_sequence:
+                    #         continue
+                    
                     # 완성된 스트레이트가 있으면 해당 숫자들만 선택
                     target_dice = []
                     temp_dice = my_dice.copy()
@@ -1220,6 +1323,8 @@ class Game:
                     
                     # 5번째는 남은 주사위 중에서 선택 (완성된 스트레이트인 경우만)
                     if temp_dice:
+                        # 남은 주사위 중 가장 작은 수 선택
+                        temp_dice.sort()
                         target_dice.append(temp_dice[0])
                     else:
                         target_dice.append(sequence[-1] + 1 if sequence[-1] < 6 else sequence[0] - 1)

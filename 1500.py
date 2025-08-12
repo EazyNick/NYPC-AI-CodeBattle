@@ -686,9 +686,12 @@ class Game:
                 while len(dice) < 5 and temp_dice:
                     dice.append(temp_dice.pop(0))
                 
-                # 여전히 5개가 안 되면 0으로 채움
+                # 여전히 5개가 안 되면 남은 주사위 중에서 선택
+                while len(dice) < 5 and temp_dice:
+                    dice.append(temp_dice.pop(0))
+                # 그래도 5개가 안 되면 기본값으로 채움 (실제 주사위 값 사용)
                 while len(dice) < 5:
-                    dice.append(0)
+                    dice.append(my_dice[0] if my_dice else 1)
                 
                 score = self.calculate_rule_potential_score(dice, rule)
                 return (dice, score)
