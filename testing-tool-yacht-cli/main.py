@@ -224,12 +224,9 @@ class Game:
         # 상대방이 이미 YACHT를 완성했다면 방해하지 않음
         if self.opponent_yacht_completed:
             return None
-        
-        # 상대방이 4개 중복을 가지고 있는지 확인
+
         # 현재 나와있는 A, B 그룹 + 상대 보유패에서 동일한 숫자 5개가 되는지 확인하는 로직
         opp_dice = self.opp_state.dice
-        if len(opp_dice) < 4:
-            return None
         
         # A그룹과 B그룹 각각에 대해 상대방 보유패와 합쳐서 YACHT 가능성 확인
         for group_name, dice_group in [("A", dice_a), ("B", dice_b)]:
@@ -492,6 +489,18 @@ class Game:
 
     def should_use_rule_strategically(self, rule: DiceRule, score: int) -> bool:
         """현재 턴과 상황에 따라 규칙을 전략적으로 사용할지 결정하는 함수"""
+        if score < 0:
+            return False
+        
+        # YACHT가 5나 6으로 구성되어 가능하다면, FOUR_OF_A_KIND나 FULL_HOUSE를 우선 고려
+        if rule == DiceRule.YACHT and score > 0:
+            # 현재 주사위로 5나 6으로 구성된 YACHT가 가능한지 확인
+            if self._is_high_value_yacht_possible():
+                # FOUR_OF_A_KIND나 FULL_HOUSE가 아직 사용 가능하다면 YACHT 사용을 지연
+                four_of_kind_available = self.my_state.rule_score[DiceRule.FOUR_OF_A_KIND.value] is None
+                full_house_available = self.my_state.rule_score[DiceRule.FULL_HOUSE.value] is None
+                if four_of_kind_available or full_house_available:
+                    return False  # YACHT 사용을 지연
         
         # 1. YACHT 규칙: 매우 높은 점수이므로 조건이 맞으면 사용
         if rule == DiceRule.YACHT:
@@ -526,7 +535,7 @@ class Game:
         
         # 6. CHOICE: 13턴 이후에만 고려 (이미 find_optimal_dice_for_rule에서 처리됨)
         if rule == DiceRule.CHOICE:
-            return self.current_round >= 13 and score - 7000 > 0
+            return score - 24000 > 0
         
         # 7. 기본 규칙들 (ONE~SIX): 각 규칙별로 다른 점수 임계값 적용
         if rule == DiceRule.ONE:
@@ -585,6 +594,15 @@ class Game:
         
         return True  # 기본적으로는 사용
 
+    def _is_high_value_yacht_possible(self) -> bool:
+        """현재 주사위로 5나 6으로 구성된 YACHT가 가능한지 확인"""
+        dice = self.my_state.dice
+        count_5 = dice.count(5)
+        count_6 = dice.count(6)
+        
+        # 5가 5개 이상이거나 6이 5개 이상이면 YACHT 가능
+        return count_5 >= 5 or count_6 >= 5
+
     # ================================ [필수 구현] ================================
     # ============================================================================
     # 주사위가 주어졌을 때, 어디에 얼마만큼 베팅할지 정하는 함수
@@ -627,8 +645,6 @@ class Game:
             block_group, block_result_amount = block_result
     
             return Bid(block_group, block_result_amount)
-        
-        
         
         # 2. n턴 이후에는 남은 룰을 바탕으로 필요한 중복 숫자 우선 고려
         if self.current_round >= 6:  # 6턴 이후부터는 전략적 선택
@@ -888,7 +904,6 @@ class Game:
         # 정렬된 주사위를 한 번만 계산하여 저장 (중복 제거된 버전과 단순 정렬된 변수)
         self.sorted_dice_unique = sorted(set(self.my_state.dice))
         self.sorted_dice = sorted(self.my_state.dice, reverse=True)
-        
         # 사용하지 않은 규칙들 찾기
         unused_rules = [i for i, score in enumerate(self.my_state.rule_score) if score is None]
         
@@ -938,8 +953,8 @@ class Game:
                     return DicePut(rule1, best_dice_for_rule1)
             
         # 일반적인 우선순위 규칙 (13턴이 아니거나 CHOICE가 이미 사용된 경우)
-        if self.current_round > 8:
-            # 8턴 이후: 기본규칙은 낮은 숫자부터 우선순위 적용
+        if self.current_round > 9:
+            # 9턴 이후: 기본규칙은 낮은 숫자부터 우선순위 적용
             priority_rules = [
                 DiceRule.YACHT.value,           # 50000점
                 DiceRule.LARGE_STRAIGHT.value,  # 30000점
@@ -955,7 +970,7 @@ class Game:
                 DiceRule.SIX.value,             # 기본 규칙 (높은 숫자)
             ]
         else:
-            # 8턴 이전: 기존 우선순위 유지
+            # 9턴 이전: 기존 우선순위 유지
             priority_rules = [
                 DiceRule.YACHT.value,           # 50000점
                 DiceRule.LARGE_STRAIGHT.value,  # 30000점
@@ -970,7 +985,7 @@ class Game:
                 DiceRule.TWO.value,
                 DiceRule.ONE.value,             # 기본 규칙 (낮은 숫자)
             ]
-        
+
         # 고점수 특수 규칙 완성 후 낮은 숫자 정리 전략
         high_value_rules_completed = (
             self.my_yacht_completed and 
@@ -1001,22 +1016,147 @@ class Game:
                         rule = DiceRule(rule_index)
                         dice, score = self.find_optimal_dice_for_rule(rule)
                         
-            
                         return DicePut(rule, dice)
         
+        # 11턴: 현재 내가 보유한 숫자를 기준으로 판단
+        # 중복된수가 가장 많은 것중 작은 수를 적용하고, 규칙외의 숫자는 사용한 기본규칙중 가장 작은숫자들로 채우기
+        if self.current_round == 11:
+            # 남은 기본규칙 확인
+            remaining_basic_rules = []
+            for i, rule in enumerate([DiceRule.ONE, DiceRule.TWO, DiceRule.THREE, DiceRule.FOUR, DiceRule.FIVE, DiceRule.SIX]):
+                if self.my_state.rule_score[i] is None:
+                    remaining_basic_rules.append(rule.value + 1)  # ONE=0이므로 +1
+            
+            # CHOICE 남아있으면, 5,6은 무조건 보존
+            priority_dice = []
+            other_dice = []
+            if self.my_state.rule_score[DiceRule.CHOICE.value] is None:
+                priority_dice = [d for d in self.my_state.dice if d >= 5]
+                other_dice = [d for d in self.my_state.dice if d < 5]
+            else:
+                other_dice = [d for d in self.my_state.dice if d < 7]
+
+            # 4이하의 수중에 중복된 수가 가장 많은 것 중 작은 수를 우선 적용
+            dice_counts = {}
+            for d in other_dice:
+                dice_counts[d] = dice_counts.get(d, 0) + 1
+            
+            # 중복아니고, 1개라면 1개라도 넣기
+
+            # 새로운 best_dice 구성
+            new_best_dice = []
+            if dice_counts:
+                max_count = max(dice_counts.values())
+                # 중복이 가장 많은 숫자들 중 가장 작은 수 선택
+                best_number = min([k for k, v in dice_counts.items() if v == max_count])
+                
+                # 해당 숫자를 남은 기본규칙에 사용할 수 있다면 사용
+                if best_number in remaining_basic_rules:
+                    # 해당 숫자를 최대한 많이 사용
+                    count_to_use = min(max_count, 5)
+                    for _ in range(count_to_use):
+                        new_best_dice.append(best_number)
+                        other_dice.remove(best_number)
+
+            # 남은 슬롯을 규칙 외의 가장 작은 숫자들로 채우기
+            remaining_slots = 5 - len(new_best_dice)
+            if remaining_slots > 0:
+                # 규칙에 포함되지 않는 숫자들을 작은 순서로 정렬
+                non_rule_dice = [d for d in other_dice if d not in remaining_basic_rules and d not in new_best_dice]
+                rule_dice = [d for d in other_dice if d in remaining_basic_rules and d not in new_best_dice]
+                non_rule_dice.sort()
+                rule_dice.sort()
+
+                new_best_dice.append(rule_dice[0])
+                # 규칙 외의 가장 작은 숫자들로 채우기
+
+            remaining_slots = 5 - len(new_best_dice)
+            if remaining_slots > 0:
+                for i in range(min(remaining_slots, len(non_rule_dice))):
+                    new_best_dice.append(non_rule_dice[i])
+
+            # 마지막으로 남은 5,6 사용
+            while len(new_best_dice) < 5 and priority_dice:
+                new_best_dice.append(priority_dice.pop(0))
+            
+            # 5개가 안 되면 남은 주사위로 채우기
+            while len(new_best_dice) < 5 and other_dice:
+                new_best_dice.append(other_dice.pop(0))
+            
+            best_dice = new_best_dice
+            
+            # 사용할 규칙 결정 (남은 기본규칙 중 가장 작은 수)
+            if remaining_basic_rules:
+                rule_number = min(remaining_basic_rules)
+                remaining_rules = DiceRule(rule_number - 1)  # 인덱스로 변환
+            else:
+                # 남은 규칙이 없으면 기본값
+                pass
+
+            return DicePut(remaining_rules, best_dice)
+
+
         # 우선순위에 따라 규칙 검사
         for priority_rule in priority_rules:
             if priority_rule in unused_rules:
                 rule = DiceRule(priority_rule)
                 dice, score = self.find_optimal_dice_for_rule(rule)
-                
+
+                # 6의 개수 카운트
+                count = self.my_state.dice.count(6)
+                # 6이 4개 이상 있으면서 10라운드 이후라면, CHOICE 규칙 사용 가능
+                if rule == DiceRule.CHOICE and count >= 4 and self.current_round >= 10:
+                    pass
                 # CHOICE 규칙은 13번째 라운드에서만 사용
-                if rule == DiceRule.CHOICE and self.current_round != 13:
+                elif (rule == DiceRule.CHOICE and self.current_round != 13):
                     continue
                 
+                # YACHT 가능성 체크 (66666 또는 55555)
+                yacht_possible_with_high_numbers = False
+                if rule == DiceRule.YACHT and score > 0:
+                    # YACHT가 가능한지 확인하고, 5나 6으로 구성된 YACHT인지 체크
+                    if len(dice) == 5 and all(d >= 5 for d in dice):
+                        yacht_possible_with_high_numbers = True
+                
                 # 현재 턴과 규칙에 따른 전략적 선택
-                # TODO: 수정할 곳
                 if self.should_use_rule_strategically(rule, score): # 사용할 수 있는 규칙이 있다면
+                    # YACHT가 5나 6으로 구성되어 가능하다면, FOUR_OF_A_KIND나 FULL_HOUSE를 우선 선택
+                    if yacht_possible_with_high_numbers:
+                        # FOUR_OF_A_KIND나 FULL_HOUSE가 사용 가능한지 확인
+                        four_of_kind_available = DiceRule.FOUR_OF_A_KIND.value in unused_rules
+                        full_house_available = DiceRule.FULL_HOUSE.value in unused_rules
+                        
+                        if four_of_kind_available or full_house_available:
+                            # YACHT 대신 FOUR_OF_A_KIND나 FULL_HOUSE를 우선적으로 시도
+                            # 먼저 FOUR_OF_A_KIND를 시도
+                            if four_of_kind_available:
+                                four_dice, four_score = self.find_optimal_dice_for_rule(DiceRule.FOUR_OF_A_KIND)
+                                if four_score > 0:
+                                    return DicePut(DiceRule.FOUR_OF_A_KIND, four_dice)
+                            
+                            # FOUR_OF_A_KIND가 안 되면 FULL_HOUSE 시도
+                            if full_house_available:
+                                full_dice, full_score = self.find_optimal_dice_for_rule(DiceRule.FULL_HOUSE)
+                                if full_score > 0:
+                                    return DicePut(DiceRule.FULL_HOUSE, full_dice)
+                            
+                            # 둘 다 안 되면 YACHT 사용을 지연
+                            continue
+                        
+                        # FOUR_OF_A_KIND와 FULL_HOUSE가 모두 불가능한 경우, 해당하는 기본 규칙 우선 선택
+                        # 55555 YACHT라면 FIVE 규칙, 66666 YACHT라면 SIX 규칙 우선
+                        if rule == DiceRule.YACHT and len(dice) == 5:
+                            if all(d == 5 for d in dice) and DiceRule.FIVE.value in unused_rules:
+                                # 55555 YACHT: FIVE 규칙 우선 사용
+                                five_dice, five_score = self.find_optimal_dice_for_rule(DiceRule.FIVE)
+                                if five_score > 0:
+                                    return DicePut(DiceRule.FIVE, five_dice)
+                            elif all(d == 6 for d in dice) and DiceRule.SIX.value in unused_rules:
+                                # 66666 YACHT: SIX 규칙 우선 사용
+                                six_dice, six_score = self.find_optimal_dice_for_rule(DiceRule.SIX)
+                                if six_score > 0:
+                                    return DicePut(DiceRule.SIX, six_dice)
+                    
                     # 불완전한 스트레이트의 경우 우선순위를 고려한 특별 처리
                     if rule in [DiceRule.SMALL_STRAIGHT, DiceRule.LARGE_STRAIGHT] and score == 0:
                         # 불완전한 스트레이트는 우선순위가 높으므로 기존 선택을 덮어씀
@@ -1028,10 +1168,11 @@ class Game:
                             best_rule = rule
                             best_dice = dice
                     elif score > best_score:
-        
                         best_score = score
                         best_rule = rule
                         best_dice = dice
+                        if rule in [DiceRule.FOUR_OF_A_KIND, DiceRule.FULL_HOUSE]:
+                            return DicePut(best_rule, best_dice)
                 else:
                     pass # 완성되는 규칙 없음
         
@@ -1050,7 +1191,6 @@ class Game:
         if best_rule is None:
             best_rule = DiceRule(unused_rules[0])
             best_dice = self.my_state.dice[:5] if len(self.my_state.dice) >= 5 else [0] * 5
-        
 
         return DicePut(best_rule, best_dice)
 
@@ -1092,13 +1232,52 @@ class Game:
                     while len(dice) < 5 and temp_dice:
                         smallest = temp_dice.pop(0)  # 가장 작은 숫자 선택
                         dice.append(smallest)
+                    score = self.calculate_rule_potential_score(dice, rule)
+                    return (dice, score)
                 
-                # 2순위: 9턴 이후에는 중복 상관없이 작은 수부터, 9턴 이전에는 중복이 없는 수들을 작은 수부터 선택
-                if self.current_round >= 9:
-                    # 9턴 이후: 중복 상관없이 작은 수부터 선택
-                    temp_dice.sort()  # 작은 수부터 정렬
-                    while len(dice) < 5 and temp_dice:
-                        dice.append(temp_dice.pop(0))
+                elif self.current_round >= 9:
+                    # 9턴 이후: 5,6을 우선 보존하고, 남은 기본규칙에 포함되지 않는 작은 수부터 제거
+                    # 남은 기본규칙 확인
+                    remaining_basic_rules = []
+                    for i, _rule in enumerate([DiceRule.ONE, DiceRule.TWO, DiceRule.THREE, DiceRule.FOUR, DiceRule.FIVE, DiceRule.SIX]):
+                        if self.my_state.rule_score[i] is None:
+                            remaining_basic_rules.append(_rule.value + 1)  # ONE=0이므로 +1
+                    
+                    # 5,6은 무조건 보존
+                    if self.my_state.rule_score[DiceRule.CHOICE.value] is None:
+                        priority_dice = [d for d in temp_dice if d >= 5]
+                        other_dice = [d for d in temp_dice if d < 5]
+                    elif self.my_state.rule_score[DiceRule.FIVE.value] is None and self.my_state.rule_score[DiceRule.SIX.value] is None:
+                        priority_dice = [d for d in temp_dice if d >= 5]
+                        other_dice = [d for d in temp_dice if d < 5]
+                        # CHOICE, 5, 6 이미 다 썼으면, 5,6보존 안함
+                    else:
+                        other_dice = [d for d in temp_dice if d < 7]
+                    
+                    # 그 다음 남은 기본규칙에 포함되지 않는 작은 수부터 제거
+                    if other_dice:
+                        # 남은 기본규칙에 포함되지 않는 수들을 작은 순서로 정렬
+                        non_rule_dice = [d for d in other_dice if d not in remaining_basic_rules]
+                        rule_dice = [d for d in other_dice if d in remaining_basic_rules]
+                        
+                        # 먼저 규칙에 포함되지 않는 작은 수부터 사용
+                        non_rule_dice.sort()
+                        while len(dice) < 5 and non_rule_dice:
+                            dice.append(non_rule_dice.pop(0))
+                        
+                        # 그 다음 규칙에 포함되는 수들을 작은 순서로 사용
+                        rule_dice.sort()
+                        while len(dice) < 5 and rule_dice:
+                            dice.append(rule_dice.pop(0))
+                        
+                    # 마지막으로 남은 5,6 사용
+                    if len(dice) < 5 and priority_dice:
+                        dice.append(priority_dice.pop(0))
+                        return (dice, -1)
+                    
+                    score = self.calculate_rule_potential_score(dice, rule)
+                    return (dice, score)
+                
                 else:
                     # 9턴 이전: 중복이 없는 수들을 가장 작은 수부터 선택
                     unique_dice = [num for num, count in remaining_count.items() if count == 1 and num in temp_dice]
@@ -1106,9 +1285,6 @@ class Game:
                     
                     while len(dice) < 5 and unique_dice:
                         selected = unique_dice.pop(0)
-                        # 9턴 이후부터 정렬
-                        if self.current_round >= 9:
-                            temp_dice.sort()
                         if selected in temp_dice:  # 아직 남아있는지 확인
                             dice.append(selected)
                             temp_dice.remove(selected)

@@ -799,12 +799,42 @@ class Game:
                         smallest = temp_dice.pop(0)  # 가장 작은 숫자 선택
                         dice.append(smallest)
                 
-                # 2순위: 9턴 이후에는 중복 상관없이 작은 수부터, 9턴 이전에는 중복이 없는 수들을 작은 수부터 선택
+                # 2순위: 9턴 이후에는 현재 남아있는 기본규칙에 포함되지 않는 수중에 가장 작은수를 없애자. 5,6은 무조건 남겨야해.
                 if self.current_round > 9:
-                    # 9턴 이후: 중복 상관없이 작은 수부터 선택
-                    temp_dice.sort()  # 작은 수부터 정렬
-                    while len(dice) < 5 and temp_dice:
-                        dice.append(temp_dice.pop(0))
+                    # 9턴 이후: 5,6을 우선 보존하고, 남은 기본규칙에 포함되지 않는 작은 수부터 제거
+                    # 남은 기본규칙 확인
+                    remaining_basic_rules = []
+                    for i, rule in enumerate([DiceRule.ONE, DiceRule.TWO, DiceRule.THREE, DiceRule.FOUR, DiceRule.FIVE, DiceRule.SIX]):
+                        if self.my_state.rule_score[i] is None:
+                            remaining_basic_rules.append(rule.value + 1)  # ONE=0이므로 +1
+                    
+                    # 5,6은 무조건 보존
+                    priority_dice = [d for d in temp_dice if d >= 5]
+                    other_dice = [d for d in temp_dice if d < 5]
+                    
+                    # 우선 5,6을 사용
+                    while len(dice) < 5 and priority_dice:
+                        dice.append(priority_dice.pop(0))
+                    
+                    # 그 다음 남은 기본규칙에 포함되지 않는 작은 수부터 제거
+                    if other_dice:
+                        # 남은 기본규칙에 포함되지 않는 수들을 작은 순서로 정렬
+                        non_rule_dice = [d for d in other_dice if d not in remaining_basic_rules]
+                        rule_dice = [d for d in other_dice if d in remaining_basic_rules]
+                        
+                        # 먼저 규칙에 포함되지 않는 작은 수부터 사용
+                        non_rule_dice.sort()
+                        while len(dice) < 5 and non_rule_dice:
+                            dice.append(non_rule_dice.pop(0))
+                        
+                        # 그 다음 규칙에 포함되는 수들을 작은 순서로 사용
+                        rule_dice.sort()
+                        while len(dice) < 5 and rule_dice:
+                            dice.append(rule_dice.pop(0))
+                    
+                    # 마지막으로 남은 5,6 사용
+                    while len(dice) < 5 and priority_dice:
+                        dice.append(priority_dice.pop(0))
                 else:
                     # 9턴 이전: 중복이 없는 수들을 가장 작은 수부터 선택
                     unique_dice = [num for num, count in remaining_count.items() if count == 1 and num in temp_dice]
