@@ -1062,16 +1062,16 @@ class Game:
             remaining_slots = 5 - len(new_best_dice)
             if remaining_slots > 0:
                 # 규칙에 포함되지 않는 숫자들을 작은 순서로 정렬
-                non_rule_dice = [d for d in other_dice if d not in remaining_basic_rules and d not in new_best_dice]
-                rule_dice = [d for d in other_dice if d in remaining_basic_rules and d not in new_best_dice]
-                non_rule_dice.sort()
-                rule_dice.sort()
-
-                new_best_dice.append(rule_dice[0])
+                rule_dice = [d for d in other_dice if d in remaining_basic_rules]
+                if rule_dice:
+                    rule_dice.sort()
+                    new_best_dice.append(rule_dice[0])
                 # 규칙 외의 가장 작은 숫자들로 채우기
 
             remaining_slots = 5 - len(new_best_dice)
             if remaining_slots > 0:
+                non_rule_dice = [d for d in other_dice if d not in remaining_basic_rules and d not in new_best_dice]
+                non_rule_dice.sort()
                 for i in range(min(remaining_slots, len(non_rule_dice))):
                     new_best_dice.append(non_rule_dice[i])
 
