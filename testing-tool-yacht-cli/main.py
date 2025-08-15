@@ -1,7 +1,7 @@
 from enum import Enum
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
-from collections import defaultdict
+from collections import defaultdict, Counter
 import sys
 import time
 import random
@@ -164,7 +164,39 @@ class Game:
         self.opponent_yacht_completed = False  # 상대방이 YACHT를 완성했는지 여부
         self.my_yacht_completed = False  # 내가 YACHT를 완성했는지 여부
 
+    def _early_high_dup_score(self, dice: List[int]) -> int:
+        """
+        1~5턴에서 4,5,6 고중복 패턴에 가점 부여.
+        높은 값일수록 우선 선택.
+        """
+        cnt = Counter(dice)
+        s = sum(dice)
 
+        # 4 of a kind 우선
+        if cnt[6] >= 4:  # 6666
+            return 10000
+        if cnt[5] >= 4:  # 5555
+            return 8000
+        if cnt[4] >= 4:  # 4444
+            return 6000
+
+        # 트리플 + 하이키커 (4666, 6665 등)
+        if cnt[6] == 3 and (cnt[5] >= 1 or cnt[4] >= 1):
+            return 5000
+        if cnt[5] == 3 and (cnt[6] >= 1 or cnt[4] >= 1):  # 5556, 5554
+            return 4000
+
+        # 하이 투페어 (5566, 4466, 4455 등)
+        if cnt[6] >= 2 and cnt[5] >= 2:
+            return 3500
+        if (cnt[6] >= 2 and cnt[4] >= 2) or (cnt[5] >= 2 and cnt[4] >= 2):
+            return 3000
+
+        # 합이 높고(>=20) 하이 페어가 있으면 소폭 가산
+        if s >= 20 and (cnt[6] >= 2 or cnt[5] >= 2 or cnt[4] >= 2):
+            return 1500
+
+        return 0
 
     def get_max_duplicate_count(self, dice_group: List[int]) -> dict:
         """주사위 그룹에서 중복된 숫자들을 딕셔너리 형태로 반환하는 함수 (사용 가능한 규칙만 고려)"""
@@ -201,6 +233,29 @@ class Game:
         
         return duplicate_dict
 
+    def _basic_rule_tiebreak(self, rule_a: DiceRule, dice_a: List[int],
+                            rule_b: DiceRule, dice_b: List[int]) -> bool:
+        """
+        두 기본 규칙(ONE~SIX)이 같은 점수일 때, 타겟 숫자를 더 많이 보유한 쪽을 우선.
+        True면 A가 더 낫다, False면 B가 더 낫다(혹은 동등).
+        """
+        basic = {DiceRule.ONE, DiceRule.TWO, DiceRule.THREE, DiceRule.FOUR, DiceRule.FIVE, DiceRule.SIX}
+        if rule_a not in basic or rule_b not in basic:
+            return False  # 기본 규칙이 아니면 이 타이브레이커 패스
+
+        target_a = rule_a.value + 1
+        target_b = rule_b.value + 1
+        cnt = Counter(self.my_state.dice)
+
+        # 내 현재 보유 주사위에서 타겟 숫자 보유량 비교
+        if cnt[target_a] != cnt[target_b]:
+            return cnt[target_a] > cnt[target_b]
+
+        # 여전히 같다면, 그 다음 우선순위(선호) – 예: 더 낮은 숫자 우선 or 아무 것도 안 바꿈
+        # 여기서는 아무 것도 안 바꾸도록 False 반환
+        return False
+
+
     def save_opponent_bid(self, round_num: int, bid_amount: int):
         """상대방의 입찰 가격을 저장하는 함수"""
         self.opponent_bids[round_num] = bid_amount
@@ -218,6 +273,13 @@ class Game:
         if self.my_state.rule_score[DiceRule.YACHT.value] is not None:
             if self.my_state.rule_score[DiceRule.YACHT.value] > 0:
                 self.my_yacht_completed = True
+
+    def _yacht_seed_number(self) -> Optional[int]:
+        cnt = Counter(self.my_state.dice)
+        if not cnt:
+            return None
+        num, c = max(cnt.items(), key=lambda x: x[1])
+        return num if c >= 4 else None
 
     def should_block_yacht(self, dice_a: List[int], dice_b: List[int]) -> Optional[Tuple[str, int]]:
         """YACHT 방해가 필요한지 확인하는 함수"""
@@ -254,6 +316,8 @@ class Game:
                                 # 상대방이 11 이하만 배팅했다면, 최솟값 + 1만 배팅
                                 min_opponent_bid = min(self.opponent_bids.values())
                                 return (target_group, min_opponent_bid + 1)
+                        if self.current_round == 13:
+                            return (target_group, 5001)  # 마지막 턴에는 방해 강도 강화
                         if num == 6:
                             return (target_group, 1001)
                         elif num == 5:
@@ -424,7 +488,7 @@ class Game:
                 if dice_sum >= 20: # 합계 높으면 더 높은 금액 입찰 (23456)
                     return 786  
                 return 487
-        
+
         elif 4 <= self.current_round <= 8:
             # 4~8턴: 중복 수에 따른 전략적 입찰
             # 내가 YACHT를 완성했다면 0 또는 (최소 입찰 - 1) 중 랜덤 선택
@@ -640,6 +704,9 @@ class Game:
     def calculate_bid(self, dice_a: List[int], dice_b: List[int]) -> Bid:
         # 13라운드 특별 전략: 남은 규칙에 필요한 숫자에 따른 배팅
         if self.current_round == 13:
+            block_result = self.should_block_yacht(dice_a, dice_b)
+            if block_result is not None:
+                return Bid(*block_result)
             # 마지막 턴 특별 전략: 남은 규칙이 2개일 때 10개 주사위를 최적으로 배분
             remaining_rules_count = sum(1 for score in self.my_state.rule_score if score is None)
             if remaining_rules_count == 2:
@@ -780,31 +847,36 @@ class Game:
                         selected_dice = dice_b
                         group = "B"
         else:
-            # 1-5턴: 기존 로직 (중복이 더 많은 그룹 선택)
-            max_count_a_dict = self.get_max_duplicate_count(dice_a)
-            max_count_b_dict = self.get_max_duplicate_count(dice_b)
-            dice_Asum = sum(dice_a)
-            dice_Bsum = sum(dice_b)
-            
-            # 딕셔너리에서 최대 중복 개수 추출
-            max_count_a = max(max_count_a_dict.values()) if max_count_a_dict else 0
-            max_count_b = max(max_count_b_dict.values()) if max_count_b_dict else 0
-            
-            # 중복이 같다면, 합이 큰 것 선택
-            if max_count_a >= max_count_b:
-                if dice_Asum >= dice_Bsum:
-                    selected_dice = dice_a
-                    group = "A"
+            # 1-5턴: 고중복(4,5,6) 패턴 우선 → 동률이면 기존 로직
+            score_a = self._early_high_dup_score(dice_a)
+            score_b = self._early_high_dup_score(dice_b)
+
+            if score_a != score_b:
+                selected_dice = dice_a if score_a > score_b else dice_b
+                group = "A" if score_a > score_b else "B"
+            else:
+                # 기존 로직 (중복이 더 많은 그룹 → 동률이면 합이 큰 쪽)
+                max_count_a_dict = self.get_max_duplicate_count(dice_a)
+                max_count_b_dict = self.get_max_duplicate_count(dice_b)
+                dice_Asum = sum(dice_a)
+                dice_Bsum = sum(dice_b)
+
+                max_count_a = max(max_count_a_dict.values()) if max_count_a_dict else 0
+                max_count_b = max(max_count_b_dict.values()) if max_count_b_dict else 0
+
+                if max_count_a >= max_count_b:
+                    if dice_Asum >= dice_Bsum:
+                        selected_dice = dice_a
+                        group = "A"
+                    else:
+                        selected_dice = dice_b
+                        group = "B"
                 else:
                     selected_dice = dice_b
                     group = "B"
-            else:
-                selected_dice = dice_b
-                group = "B"
 
         # 3. 턴별 전략적 입찰 금액 계산
         amount = self.calculate_strategic_bid_amount(selected_dice)
-        
         return Bid(group, amount)
 
     def calculate_final_round_bid(self, dice_a: List[int], dice_b: List[int]) -> Bid:
@@ -1023,17 +1095,47 @@ class Game:
         )
         
         if high_value_rules_completed and self.current_round < 9:
-            # 9라운드 전에만 1,2,3이 3개 이상 있으면 우선적으로 정리 (점수 무시)
+            # 저점 정리 전에, 현재 패로 FOUR_OF_A_KIND / FULL_HOUSE가 가능한지 점수 확인
+            fh_score = foak_score = -1
+            fh_dice = foak_dice = []
+
+            if self.my_state.rule_score[DiceRule.FOUR_OF_A_KIND.value] is None:
+                _d, _s = self.find_optimal_dice_for_rule(DiceRule.FOUR_OF_A_KIND)
+                foak_dice, foak_score = _d, _s
+
+            if self.my_state.rule_score[DiceRule.FULL_HOUSE.value] is None:
+                _d, _s = self.find_optimal_dice_for_rule(DiceRule.FULL_HOUSE)
+                fh_dice, fh_score = _d, _s
+
+            best_combo_score = max(foak_score, fh_score)
+            best_combo = None
+            if best_combo_score > 0:
+                best_combo = DicePut(
+                    DiceRule.FOUR_OF_A_KIND if foak_score >= fh_score else DiceRule.FULL_HOUSE,
+                    foak_dice if foak_score >= fh_score else fh_dice
+                )
+
+            # 이제서야 1,2,3 정리 후보 계산 (점수 비교용)
+            low_pick = None
+            low_pick_score = -1
             for low_num in [1, 2, 3]:
                 count = self.my_state.dice.count(low_num)
-                if count >= 3:  # 3개 이상이면 정리 대상
-                    rule_index = low_num - 1  # 1→0(ONE), 2→1(TWO), 3→2(THREE)
-                    if rule_index in unused_rules:
-                        rule = DiceRule(rule_index)
-                        dice, score = self.find_optimal_dice_for_rule(rule)
-                        
-            
-                        return DicePut(rule, dice)
+                rule_index = low_num - 1
+                if count >= 3 and rule_index in unused_rules:
+                    rule = DiceRule(rule_index)
+                    dice, score = self.find_optimal_dice_for_rule(rule)
+                    # ONE/TWO/THREE의 잠재 점수(예: 3개면 3000/6000/9000)
+                    if score > low_pick_score:
+                        low_pick = DicePut(rule, dice)
+                        low_pick_score = score
+
+            # 비교: 콤보 점수가 더 높으면 콤보 우선
+            if best_combo is not None and best_combo_score > low_pick_score:
+                return best_combo
+
+            # 콤보가 없거나, 저점정리 점수가 더 크다면 그때만 저점 정리 실행
+            if low_pick is not None:
+                return low_pick
         
         elif self.my_yacht_completed and self.current_round < 9:
             # 9라운드 전에만 YACHT만 완성된 경우: 4개 이상의 낮은 숫자만 정리
@@ -1226,6 +1328,11 @@ class Game:
                         best_dice = dice
                         if rule in [DiceRule.FOUR_OF_A_KIND, DiceRule.FULL_HOUSE]:
                             return DicePut(best_rule, best_dice)
+                    elif score == best_score and best_rule is not None:
+                        # 동점이면, 기본 규칙끼리일 때 더 많이 가진 숫자 규칙 선택
+                        if self._basic_rule_tiebreak(rule, dice, best_rule, best_dice):
+                            best_rule = rule
+                            best_dice = dice
                 else:
                     pass # 완성되는 규칙 없음
         
@@ -1235,10 +1342,16 @@ class Game:
                 rule = DiceRule(rule_index)
                 dice, score = self.find_optimal_dice_for_rule(rule)
                 
+                # ↓ 이렇게 바꾸기
                 if score > best_score:
                     best_score = score
                     best_rule = rule
                     best_dice = dice
+                elif score == best_score and best_rule is not None:
+                    # 동점이면, 기본 규칙끼리일 때 더 많이 가진 숫자 규칙 선택
+                    if self._basic_rule_tiebreak(rule, dice, best_rule, best_dice):
+                        best_rule = rule
+                        best_dice = dice
         
         # 최적의 조합이 없으면 기본값 사용
         if best_rule is None:
@@ -1259,126 +1372,194 @@ class Game:
             target_count = my_dice.count(target_number)  # 정렬된 주사위 불필요, count 사용
             
             if target_count > 0:
-                # 해당 숫자를 최대한 많이 선택 (최대 5개)
-                dice = []
-                temp_dice = my_dice.copy()
-                
-                # 해당 숫자들을 우선 선택
-                for _ in range(min(5, target_count)):
-                    dice.append(target_number)
-                    temp_dice.remove(target_number)
-                
-                # 5개가 안 되면 나머지 주사위로 채움 (특별한 우선순위 적용)
-                remaining_count = {}
-                for d in temp_dice:
-                    remaining_count[d] = remaining_count.get(d, 0) + 1
-                
-                # FOUR_OF_A_KIND, FULL_HOUSE가 아직 사용 가능한지 확인
-                four_of_kind_available = self.my_state.rule_score[DiceRule.FOUR_OF_A_KIND.value] is None
-                full_house_available = self.my_state.rule_score[DiceRule.FULL_HOUSE.value] is None
-                high_rules_available = four_of_kind_available or full_house_available
-                
-                # 1순위: YACHT가 달성되고 FOUR_OF_A_KIND나 FULL_HOUSE가 사용 가능하면 가장 작은수를 사용
-                yacht_completed = self.my_state.rule_score[DiceRule.YACHT.value] is not None
-                if yacht_completed and high_rules_available and temp_dice:
-                    temp_dice.sort()  # 작은 숫자부터 정렬
-                    while len(dice) < 5 and temp_dice:
-                        smallest = temp_dice.pop(0)  # 가장 작은 숫자 선택
-                        dice.append(smallest)
-                    score = self.calculate_rule_potential_score(dice, rule)
-                    return (dice, score)
-                
-                elif self.current_round >= 9:
-                    # 9턴 이후: 5,6을 우선 보존하고, 남은 기본규칙에 포함되지 않는 작은 수부터 제거
-                    # 남은 기본규칙 확인
-                    remaining_basic_rules = []
-                    for i, _rule in enumerate([DiceRule.ONE, DiceRule.TWO, DiceRule.THREE, DiceRule.FOUR, DiceRule.FIVE, DiceRule.SIX]):
-                        if self.my_state.rule_score[i] is None:
-                            remaining_basic_rules.append(_rule.value + 1)  # ONE=0이므로 +1
-                    
-                    # 5,6은 무조건 보존
-                    if self.my_state.rule_score[DiceRule.CHOICE.value] is None:
-                        priority_dice = [d for d in temp_dice if d >= 5]
-                        other_dice = [d for d in temp_dice if d < 5]
-                    elif self.my_state.rule_score[DiceRule.FIVE.value] is None and self.my_state.rule_score[DiceRule.SIX.value] is None:
-                        priority_dice = [d for d in temp_dice if d >= 5]
-                        other_dice = [d for d in temp_dice if d < 5]
-                        # CHOICE, 5, 6 이미 다 썼으면, 5,6보존 안함
+                # 0) 타깃 숫자 최대치 먼저 담고, 나머지(temp_dice)에서 채우는 정책들 비교
+                use = min(5, target_count)
+                base = [target_number] * use
+                tmp = my_dice.copy()
+                for _ in range(use):
+                    tmp.remove(target_number)
+
+                def finalize_fill(dice, temp_dice):
+                    # (공통 후처리) 3순위: 남은 주사위로 채움
+                    large_done = self.my_state.rule_score[DiceRule.LARGE_STRAIGHT.value] is not None
+                    small_done = self.my_state.rule_score[DiceRule.SMALL_STRAIGHT.value] is not None
+                    straights_completed = large_done and small_done
+
+                    if straights_completed:
+                        temp_dice.sort()  # 작은 수부터
+                        while len(dice) < 5 and temp_dice:
+                            dice.append(temp_dice.pop(0))
                     else:
-                        priority_dice = []
-                        other_dice = [d for d in temp_dice if d < 7]
-                    
-                    # 그 다음 남은 기본규칙에 포함되지 않는 작은 수부터 제거
-                    if other_dice:
-                        # 남은 기본규칙에 포함되지 않는 수들을 작은 순서로 정렬
-                        non_rule_dice = [d for d in other_dice if d not in remaining_basic_rules]
-                        rule_dice = [d for d in other_dice if d in remaining_basic_rules]
-                        
-                        # 먼저 규칙에 포함되지 않는 작은 수부터 사용
-                        non_rule_dice.sort()
-                        while len(dice) < 5 and non_rule_dice:
-                            dice.append(non_rule_dice.pop(0))
-                        
-                        # 그 다음 규칙에 포함되는 수들을 작은 순서로 사용
-                        rule_dice.sort()
-                        while len(dice) < 5 and rule_dice:
-                            dice.append(rule_dice.pop(0))
-                    
-                    # 마지막으로 남은 5,6 사용
-                    if len(dice) < 5 and priority_dice:
-                        dice.append(priority_dice.pop(0))
-                        # 5개가 되지 않았지만 priority_dice가 비어있을 수 있으므로 안전하게 처리
-                        if len(dice) < 5 and temp_dice:
-                            # temp_dice에서 남은 주사위로 채움
-                            while len(dice) < 5 and temp_dice:
-                                dice.append(temp_dice.pop(0))
-                        return (dice, -1)
-                    
-                    # 5개가 안 되면 temp_dice에서 남은 주사위로 채움
+                        while len(dice) < 5 and temp_dice:
+                            dice.append(temp_dice.pop(0))
+
+                    # 안전망
                     while len(dice) < 5 and temp_dice:
                         dice.append(temp_dice.pop(0))
-                    
-                    score = self.calculate_rule_potential_score(dice, rule)
-                    return (dice, score)
-                
-                else:
-                    # 9턴 이전: 중복이 없는 수들을 가장 작은 수부터 선택
-                    unique_dice = [num for num, count in remaining_count.items() if count == 1 and num in temp_dice]
-                    unique_dice.sort()  # 작은 수부터 정렬
-                    
-                    while len(dice) < 5 and unique_dice:
-                        selected = unique_dice.pop(0)
-                        if selected in temp_dice:  # 아직 남아있는지 확인
-                            dice.append(selected)
-                            temp_dice.remove(selected)
-                
-                # 3순위: 나머지 주사위로 채움
-                # 고점수 규칙들이 달성된 경우 작은 숫자부터 선택 (큰 숫자 보존)
-                large_straight_completed = self.my_state.rule_score[DiceRule.LARGE_STRAIGHT.value] is not None
-                small_straight_completed = self.my_state.rule_score[DiceRule.SMALL_STRAIGHT.value] is not None
-                # LARGE_STRAIGHT, SMALL_STRAIGHT 둘 다 달성되면 6 보존
-                straights_completed = large_straight_completed and small_straight_completed
-                
-                if straights_completed:
-                    # 고점수 규칙 달성 시: 작은 숫자부터 선택 (큰 숫자 보존)
-                    temp_dice.sort()  # 작은 숫자부터 정렬
-                    while len(dice) < 5 and temp_dice:
-                        dice.append(temp_dice.pop(0))  # 가장 작은 숫자부터 선택
-                else:
-                    # 기존 로직: 임의 순서
+                    while len(dice) < 5:
+                        dice.append(my_dice[0] if my_dice else 1)
+
+                    # 타깃 외 꼬리만 정렬 (예: 22234)
+                    tail = sorted(dice[use:])
+                    return dice[:use] + tail
+
+                def fill_new_policy():
+                    # 새 정책: 씨앗 보존 + 싱글톤 우선 + 중복은 1개만 + 작은 수부터
+                    dice = base.copy()
+                    temp_dice = tmp.copy()
+
+                    seed = None
+                    if self.my_state.rule_score[DiceRule.YACHT.value] is None:
+                        seed = self._yacht_seed_number()
+
+                    fill_pool = [d for d in temp_dice if seed is None or d != seed]
+                    cnt = Counter(fill_pool)
+                    singletons = sorted([n for n, c in cnt.items() if c == 1 and n != target_number])
+                    dupes      = sorted([n for n, c in cnt.items() if c >= 2 and n != target_number])
+
+                    for n in singletons:
+                        if len(dice) >= 5: break
+                        fill_pool.remove(n)
+                        dice.append(n)
+
+                    for n in dupes:
+                        if len(dice) >= 5: break
+                        fill_pool.remove(n)
+                        dice.append(n)
+
+                    fill_pool.sort()
+                    while len(dice) < 5 and fill_pool:
+                        dice.append(fill_pool.pop(0))
+
                     while len(dice) < 5 and temp_dice:
                         dice.append(temp_dice.pop(0))
-                
-                # 여전히 5개가 안 되면 남은 주사위 중에서 선택
-                while len(dice) < 5 and temp_dice:
-                    dice.append(temp_dice.pop(0))
-                
-                # 그래도 5개가 안 되면 기본값으로 채움 (실제 주사위 값 사용)
-                while len(dice) < 5:
-                    dice.append(my_dice[0] if my_dice else 1)
-                
-                score = self.calculate_rule_potential_score(dice, rule)
-                return (dice, score)
+
+                    return finalize_fill(dice, temp_dice)
+
+                def fill_old_policy():
+                    # 기존 중요 로직을 그대로 살린 채우기
+                    dice = base.copy()
+                    temp_dice = tmp.copy()
+
+                    # (참고: 카운트는 이후 분기에서 필요할 수 있으므로 계산)
+                    remaining_count = {}
+                    for d in temp_dice:
+                        remaining_count[d] = remaining_count.get(d, 0) + 1
+
+                    four_ok  = self.my_state.rule_score[DiceRule.FOUR_OF_A_KIND.value] is None
+                    full_ok  = self.my_state.rule_score[DiceRule.FULL_HOUSE.value]   is None
+                    high_ok  = four_ok or full_ok
+                    yacht_completed = self.my_state.rule_score[DiceRule.YACHT.value] is not None
+
+                    # 1) YACHT 완료 + (FOAK/FH 가능) 이면 작은 수 위주로 채우기
+                    if yacht_completed and high_ok and temp_dice:
+                        temp_dice.sort()
+                        while len(dice) < 5 and temp_dice:
+                            dice.append(temp_dice.pop(0))
+                        return finalize_fill(dice, temp_dice)
+
+                    # 2) 9턴 이후: 5/6 보존 정책
+                    if self.current_round >= 9:
+                        remaining_basic_rules = []
+                        for i, _rule in enumerate([DiceRule.ONE, DiceRule.TWO, DiceRule.THREE, DiceRule.FOUR, DiceRule.FIVE, DiceRule.SIX]):
+                            if self.my_state.rule_score[i] is None:
+                                remaining_basic_rules.append(_rule.value + 1)
+
+                        preserve_high = (
+                            self.my_state.rule_score[DiceRule.CHOICE.value] is None
+                            or self.my_state.rule_score[DiceRule.FIVE.value] is None
+                            or self.my_state.rule_score[DiceRule.SIX.value]  is None
+                        )
+
+                        used_basic, unused_basic, others = [], [], []
+                        for d in temp_dice:
+                            if 1 <= d <= 6:
+                                if self.my_state.rule_score[d - 1] is not None:
+                                    used_basic.append(d)
+                                else:
+                                    unused_basic.append(d)
+                            else:
+                                others.append(d)
+
+                        preserved = []
+                        if preserve_high:
+                            def drain_preserve(pool):
+                                kept, taken = [], []
+                                for x in pool:
+                                    if x >= 5: taken.append(x)
+                                    else:      kept.append(x)
+                                return kept, taken
+                            used_basic, p1   = drain_preserve(used_basic)
+                            unused_basic, p2 = drain_preserve(unused_basic)
+                            preserved = sorted(p1 + p2)
+
+                        def take_from(src, limit=None):
+                            taken = []
+                            src.sort()
+                            while len(dice) + len(taken) < 5 and src:
+                                if limit is not None and len(taken) >= limit:
+                                    break
+                                taken.append(src.pop(0))
+                            return taken
+
+                        dice.extend(take_from(used_basic, limit=None))
+
+                        if len(dice) < 5:
+                            unused_basic.sort()
+                            i = 0
+                            while len(dice) < 5 and i < len(unused_basic):
+                                dice.append(unused_basic[i]); i += 1
+                            j = i
+                            while len(dice) < 5 and j < len(unused_basic):
+                                dice.append(unused_basic[j]); j += 1
+
+                        if len(dice) < 5 and preserved:
+                            preserved.sort()
+                            k = 0
+                            while len(dice) < 5 and k < len(preserved):
+                                dice.append(preserved[k]); k += 1
+
+                        if len(dice) < 5 and others:
+                            others.sort()
+                            while len(dice) < 5 and others:
+                                dice.append(others.pop(0))
+
+                        return finalize_fill(dice, temp_dice)
+
+                    # 3) 9턴 이전: LARGE_STRAIGHT 잠재력 보존 (낮은 중복→나머지 중복→낮은 유니크→높은 유니크)
+                    cnt = Counter(temp_dice)
+                    low_dupes = sorted([n for n, c in cnt.items() if 1 <= n <= 3 and c >= 2])
+                    hi_dupes  = sorted([n for n, c in cnt.items() if 4 <= n <= 6 and c >= 2])
+                    low_uni   = sorted([n for n, c in cnt.items() if 1 <= n <= 3 and c == 1])
+                    hi_uni    = sorted([n for n, c in cnt.items() if 4 <= n <= 6 and c == 1])
+
+                    def take_number(num):
+                        nonlocal temp_dice, dice
+                        if num in temp_dice and len(dice) < 5:
+                            temp_dice.remove(num)
+                            dice.append(num)
+
+                    for bucket in (low_dupes, hi_dupes, low_uni, hi_uni):
+                        for n in bucket:
+                            while cnt[n] > 0 and len(dice) < 5:
+                                take_number(n)
+                                cnt[n] -= 1
+                        if len(dice) >= 5:
+                            break
+
+                    return finalize_fill(dice, temp_dice)
+
+                # 두 정책 산출물을 비교하여 더 높은 점수(같으면 새 정책)를 채택
+                dice_old = fill_old_policy()
+                dice_new = fill_new_policy()
+
+                score_old = self.calculate_rule_potential_score(dice_old, rule)
+                score_new = self.calculate_rule_potential_score(dice_new, rule)
+
+                if score_new >= score_old:
+                    return (dice_new, score_new)
+                else:
+                    return (dice_old, score_old)
         
         elif rule == DiceRule.CHOICE:
             # 10턴 이후에만 CHOICE 고려
@@ -1407,11 +1588,14 @@ class Game:
                             target_dice.append(num)
                             temp_dice.remove(num)
                         
-                        # 나머지 1개는 다른 주사위 중에서 선택
+                        # ✅ 나머지 1개는 점수 극대화를 위해 "가장 큰 주사위" 선택
+                        #    (우선 4~6 중 최댓값, 없으면 남은 주사위 중 최댓값)
                         if temp_dice:
-                            target_dice.append(temp_dice[0])
+                            hi_456 = [d for d in temp_dice if d >= 4]
+                            candidate = max(hi_456) if hi_456 else max(temp_dice)
+                            target_dice.append(candidate)
                         else:
-                            target_dice.append(num)  # 기본값
+                            target_dice.append(num)  # fallback
                         
                         score = self.calculate_rule_potential_score(target_dice, rule)
                         return (target_dice, score)
